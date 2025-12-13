@@ -4,19 +4,6 @@ A PyTorch implementation of the NeurIPS'25 paper "Provably Efficient Online RLHF
 
 This repository is forked from [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) repo, and modified to implement our Online RLHF Pipeline.
 
-## 📖 Reference & Cite
-
-If you find this repository useful, please consider citing our paper:
-
-```bibtex
-@inproceedings{NeurIPS'25:OnlineRLHF,
-    author = {Long-Fei Li and Yu-Yang Qian and Peng Zhao and Zhi-Hua Zhou},
-    title = {Provably Efficient Online RLHF with One-Pass Reward Modeling},
-    booktitle = {Advances in Neural Information Processing Systems 38 (NeurIPS)},
-    year = {2025},
-    pages = {to appear}
-}
-```
 
 ## 🌟 Cook Your Own Online-RLHF Recipe!
 
@@ -202,3 +189,18 @@ python pipeline/Ultrafeedback/llama/online_deployment_ultrafeedback_llama.py \
 -   `--total_T`: Total number of training iterations
 -   `--start_t`: Starting iteration
 -   `--stop_t`: Stopping iteration
+
+
+## 📖 Ciatation
+
+If you find this repository useful, please consider citing our paper:
+
+```bibtex
+@inproceedings{NeurIPS'25:OnlineRLHF,
+    author = {Long-Fei Li and Yu-Yang Qian and Peng Zhao and Zhi-Hua Zhou},
+    title = {Provably Efficient Online RLHF with One-Pass Reward Modeling},
+    booktitle = {Advances in Neural Information Processing Systems 38 (NeurIPS)},
+    year = {2025},
+    pages = {to appear}
+}
+```
