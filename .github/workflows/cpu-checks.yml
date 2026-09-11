@@ -1,0 +1,54 @@
+name: cpu-checks
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - chore/maintenance-round1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  PYTHON_VERSION: "3.12"
+  # CPU-only, no model-service online access.
+  OMP_NUM_THREADS: "2"
+  MKL_NUM_THREADS: "2"
+  HF_HUB_OFFLINE: "1"
+  TRANSFORMERS_OFFLINE: "1"
+
+jobs:
+  lint:
+    name: Lint new maintenance code
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install lint tools
+        run: pip install -r requirements/lint.txt
+      - name: Ruff check (tests only)
+        run: ruff check tests/
+
+  cpu-tests:
+    name: CPU pytest (isolated from training stack)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install CPU-only torch
+        run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Install standalone test dependencies
+        run: pip install -r requirements/cpu-test.txt
+      - name: Run CPU tests
+        # Expected: all tests pass except 2 strict xfails that document known
+        # legacy defects (still present). An XPASS means a defect was fixed
+        # and the test should be un-xfailed.
+        run: python -m pytest tests/cpu -q -ra --strict-markers
