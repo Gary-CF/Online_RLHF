@@ -45,7 +45,10 @@ def _is_owned(name):
 _TRAINER_FILES = {
     "rm": "trainer/rm_trainer_head_hvp.py",
     "rm_active": "trainer/rm_active_trainer_head_hvp.py",
+    "rm_hvp": "trainer/rm_trainer_hvp.py",
 }
+
+_MISSING = object()
 
 
 class _FailFastModule(types.ModuleType):
@@ -156,6 +159,13 @@ def load_convert_to_dataset():
     )
 
 
+def load_rm_score_selection():
+    """Load the real ``openrlhf/utils/rm_score_selection.py``."""
+    return _module_from_checkout(
+        "openrlhf.utils.rm_score_selection", "utils/rm_score_selection.py"
+    )
+
+
 def make_trainer_shell(trainer_module, **state):
     """Build a trainer instance without running its constructor.
 
@@ -177,3 +187,44 @@ def make_trainer_shell(trainer_module, **state):
     for key, value in defaults.items():
         setattr(trainer, key, value)
     return trainer
+
+
+@contextlib.contextmanager
+def deepspeed_zero_gather_passthrough():
+    """Scoped test-side pass-through for ``deepspeed.zero.GatheredParameters``.
+
+    Only the FULL-MODEL trainer's production HVP wraps the real autograd math
+    in this parameter-gathering gate (a ZeRO sharding helper). Inside this
+    context the gate is a no-op: no computation is mocked and no fake result
+    is returned — on real multi-GPU ZeRO this call would gather sharded
+    parameters, which does not exist on the CPU fixture. Every other
+    deepspeed attribute access still fails fast.
+    """
+    sentinel = sys.modules["deepspeed"]
+    previous = sentinel.__dict__.get("zero", _MISSING)
+
+    class _Zero:
+        @staticmethod
+        @contextlib.contextmanager
+        def GatheredParameters(params, modifier_rank=0):
+            yield
+
+    sentinel.zero = _Zero()
+    try:
+        yield
+    finally:
+        if previous is _MISSING:
+            sentinel.__dict__.pop("zero", None)
+        else:
+            sentinel.zero = previous
+
+
+def trainer_hvp_gate(kind):
+    """Context manager under which the given trainer kind's HVP may run.
+
+    The full-model trainer production code calls deepspeed's
+    GatheredParameters gate; the head trainers do not.
+    """
+    if kind == "rm_hvp":
+        return deepspeed_zero_gather_passthrough()
+    return contextlib.nullcontext()
