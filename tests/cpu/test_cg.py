@@ -1,4 +1,4 @@
-"""Conjugate gradient characterization tests for the legacy head-HVP trainers.
+"""Conjugate gradient characterization tests for the legacy HVP reward trainers.
 
 Isolation notes:
 - ``args.damping`` (the direction-mixing weight) is set to 0.0 so the solver
@@ -26,7 +26,7 @@ import pytest
 import torch
 
 from tests.support import logistic
-from tests.support.legacy_imports import make_trainer_shell
+from tests.support.legacy_imports import make_trainer_shell, trainer_hvp_gate
 
 
 def _solve(
@@ -41,10 +41,12 @@ def _solve(
     loss, flat_grad = logistic.pairwise_loss_and_flat_grad(
         legacy_trainer.loss.PairWiseLoss, Z, theta, rejected
     )
-    return (
-        trainer.conjugate_gradient_solver(
+    with trainer_hvp_gate(legacy_trainer.kind):
+        result = trainer.conjugate_gradient_solver(
             [theta], loss, flat_grad, max_iter=max_iter, residual_tol=residual_tol
-        ),
+        )
+    return (
+        result,
         flat_grad,
         Z,
         theta,
@@ -121,9 +123,11 @@ def test_cg_residual_tol_compares_squared_residual(legacy_trainer):
         cg_damping=damping,
         args=types.SimpleNamespace(damping=0.0),
     )
-    x = trainer.conjugate_gradient_solver(
-        [theta], loss, flat_grad, max_iter=10, residual_tol=tol
-    )
+    x = None
+    with trainer_hvp_gate(legacy_trainer.kind):
+        x = trainer.conjugate_gradient_solver(
+            [theta], loss, flat_grad, max_iter=10, residual_tol=tol
+        )
     assert torch.allclose(x, alpha * g, rtol=1e-7, atol=1e-9)
 
 
