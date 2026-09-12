@@ -119,6 +119,11 @@ class RewardModelTrainer(ABC):
     
     def conjugate_gradient_solver(self, params: List[nn.Parameter], loss: torch.Tensor,
                                   flat_grad: torch.Tensor, max_iter=10, residual_tol=1e-10):
+        """Solve (H + cg_damping * I) x = flat_grad via conjugate gradient.
+
+        residual_tol is compared against the SQUARED residual norm
+        (r_norm_sq < residual_tol), not the residual norm.
+        """
         # flat_grad = grad.view(-1)
         x = torch.zeros_like(flat_grad)  # initial guess
         # x = 1e-4 * torch.randn_like(flat_grad)  # initial guess
@@ -137,10 +142,11 @@ class RewardModelTrainer(ABC):
                 if i == max_iter - 1:
                     break
                 
+                r_norm_sq_old = r_norm_sq
                 r -= alpha * Ap
                 r_norm_sq = torch.sum(r * r)
                 
-                beta = r_norm_sq / r_norm_sq
+                beta = r_norm_sq / r_norm_sq_old
                 
                 if r_norm_sq < residual_tol:
                     break
@@ -151,7 +157,12 @@ class RewardModelTrainer(ABC):
                 torch.cuda.empty_cache()
         
         if max_iter > 1:
-            x = self.args.damping * flat_grad + (1.0 - self.args.damping) * x
+            # Fallback keeps pre-flag behavior bit-identical when the CLI did
+            # not set args.cg_mixing_weight (0.0 is a legal explicit value).
+            cg_mixing_weight = getattr(self.args, "cg_mixing_weight", None)
+            if cg_mixing_weight is None:
+                cg_mixing_weight = self.args.damping
+            x = cg_mixing_weight * flat_grad + (1.0 - cg_mixing_weight) * x
             
         return x.detach()
         

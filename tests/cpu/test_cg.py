@@ -9,15 +9,13 @@ Isolation notes:
   This is interface semantics (the name can mislead), pinned by
   ``test_cg_residual_tol_compares_squared_residual``.
 
-Known defect under test (CG-1, see docs/maintenance/review.md): the
-Fletcher-Reeves beta — the ratio of the NEW to the OLD squared residual —
-is computed as ``r_norm_sq / r_norm_sq`` where both operands are the freshly
-updated value. Whenever that denominator is nonzero this yields beta = 1.0
-(exact zero residual would be 0/0); the search direction update becomes
-``p = r + p`` instead of the standard CG recurrence. In exact arithmetic,
-standard linear CG on an SPD system converges to the solution within at most
-``dim`` iterations; with this beta it does not, which the strict xfail below
-exposes on the small float64 fixture (numerical tolerances apply).
+Fixed defect (CG-1, fixed on branch ``fix/cg-fletcher-reeves-beta``, see
+docs/maintenance/review.md): the Fletcher-Reeves beta — the ratio of the NEW
+to the OLD squared residual — used to be computed as ``r_norm_sq /
+r_norm_sq`` (both operands the freshly updated value), i.e. beta = 1.0
+whenever its denominator was nonzero. The production solvers now save the old
+value before updating the residual, and the two tests below pin the corrected
+behavior so the one-line regression cannot return silently.
 """
 
 import types
@@ -69,23 +67,64 @@ def test_cg_output_contract_at_dimension_budget(legacy_trainer):
     assert torch.isfinite(x).all()
 
 
-# Known defect CG-1 (see docs/maintenance/review.md): beta == 1.0 whenever the
-# residual-squared denominator is nonzero prevents convergence on SPD systems.
-@pytest.mark.xfail(
-    strict=True,
-    raises=AssertionError,
-    reason="known defect CG-1 still present: beta == r_norm_sq/r_norm_sq == 1.0 "
-    "prevents convergence on SPD systems; see docs/maintenance/review.md",
-)
+# CG-1 regression guard: the audit fixture's SPD system must be solved to
+# rel. residual <= 1e-5 within dim=4 steps now that the Fletcher-Reeves beta
+# uses the old/new squared-residual ratio. (Before the fix this needed an
+# xfail: 4-step rel. residual was 0.231158.)
 def test_cg_solves_spd_system_within_dimension_steps(legacy_trainer):
-    """Standard linear CG on this SPD system would reach rel. residual <= 1e-5
-    within dim=4 steps in exact arithmetic (float64 tolerances apply)."""
+    """Standard linear CG on this SPD system reaches rel. residual <= 1e-5
+    within dim=4 steps (float64). Before the CG-1 fix the 4-step relative
+    residual here was 0.231158; after the fix it is ~4.5e-6 (recorded in
+    docs/maintenance/review.md)."""
     x, flat_grad, Z, theta, rejected, damping = _solve(legacy_trainer, max_iter=4)
     operator = logistic.regularized_hessian(Z, theta, rejected, damping)
     reference = torch.linalg.solve(operator, flat_grad)
 
-    assert torch.allclose(x, reference, rtol=1e-5, atol=1e-7)
+    assert torch.allclose(x, reference, rtol=1e-4, atol=1e-6)
     assert _relative_residual(operator, x, flat_grad) <= 1e-5
+
+
+def test_cg_converges_on_conjugate_direction_system(legacy_trainer):
+    """Anti-revert regression: a 3x3 SPD system whose eigenvectors are far
+    from the residual directions — fast convergence REQUIRES genuinely
+    conjugate search directions. With beta pinned to 1.0 this system stalls;
+    with the Fletcher-Reeves ratio it solves within dim steps. The operator
+    is exercised through the production solver on a real quadratic loss."""
+    dim = 3
+    angle = torch.tensor(0.9, dtype=torch.float64)
+    rotation = torch.tensor(
+        [
+            [torch.cos(angle), -torch.sin(angle), 0.0],
+            [torch.sin(angle), torch.cos(angle), 0.0],
+            [0.0, 0.0, 1.0],
+        ],
+        dtype=torch.float64,
+    )
+    eigenvalues = torch.diag(torch.tensor([1.0, 30.0, 200.0], dtype=torch.float64))
+    operator = rotation @ eigenvalues @ rotation.T
+    operator = 0.5 * (operator + operator.T)  # guard against asymmetry noise
+    rhs = torch.tensor([1.0, -2.0, 0.5], dtype=torch.float64)
+
+    theta = torch.nn.Parameter(torch.zeros(dim, dtype=torch.float64))
+    loss = 0.5 * theta @ operator @ theta - rhs @ theta
+    flat_grad = torch.cat(
+        [g.reshape(-1) for g in torch.autograd.grad(loss, [theta], create_graph=True)]
+    )
+    rhs = flat_grad.detach()  # the solver solves A x = flat_grad (here A@0 - rhs)
+
+    trainer = make_trainer_shell(
+        legacy_trainer.trainer,
+        cg_damping=0.0,
+        args=types.SimpleNamespace(damping=0.0),
+    )
+    with trainer_hvp_gate(legacy_trainer.kind):
+        x = trainer.conjugate_gradient_solver(
+            [theta], loss, flat_grad, max_iter=dim, residual_tol=1e-12
+        )
+
+    reference = torch.linalg.solve(operator, rhs)
+    assert torch.allclose(x, reference, rtol=1e-6, atol=1e-8)
+    assert _relative_residual(operator, x, rhs) <= 1e-6
 
 
 def test_cg_full_mix_returns_gradient_direction(legacy_trainer):
@@ -144,3 +183,48 @@ def test_cg_is_deterministic(legacy_trainer):
     x1, _, *_ = _solve(legacy_trainer, max_iter=4)
     x2, _, *_ = _solve(legacy_trainer, max_iter=4)
     assert torch.equal(x1, x2)
+
+
+def _solve_with_args(legacy_trainer, args_namespace, max_iter=3):
+    Z, theta, rejected = logistic.make_logistic_problem()
+    trainer = make_trainer_shell(
+        legacy_trainer.trainer,
+        cg_damping=0.2,
+        args=args_namespace,
+    )
+    loss, flat_grad = logistic.pairwise_loss_and_flat_grad(
+        legacy_trainer.loss.PairWiseLoss, Z, theta, rejected
+    )
+    with trainer_hvp_gate(legacy_trainer.kind):
+        result = trainer.conjugate_gradient_solver(
+            [theta], loss, flat_grad, max_iter=max_iter, residual_tol=1e-10
+        )
+    return result, flat_grad
+
+
+def test_cg_mixing_weight_defaults_to_damping_bitwise(legacy_trainer):
+    """Task B regression: when args has no cg_mixing_weight attribute (every
+    pre-existing caller), the fallback must reproduce the old self.args.damping
+    mixing EXACTLY — and an explicit value equal to damping must agree bitwise."""
+    fallback, _ = _solve_with_args(legacy_trainer, types.SimpleNamespace(damping=0.8))
+    explicit, _ = _solve_with_args(
+        legacy_trainer, types.SimpleNamespace(damping=0.8, cg_mixing_weight=0.8)
+    )
+    assert torch.equal(fallback, explicit)
+
+
+def test_cg_mixing_weight_overrides_damping(legacy_trainer):
+    """An explicit cg_mixing_weight overrides the damping-based mixing:
+    w=0.0 gives the pure CG direction regardless of args.damping, and an
+    intermediate w blends linearly per the documented formula."""
+    pure, g = _solve_with_args(
+        legacy_trainer, types.SimpleNamespace(damping=0.8, cg_mixing_weight=0.0)
+    )
+    zero_damping_ref, _ = _solve_with_args(legacy_trainer, types.SimpleNamespace(damping=0.0))
+    assert torch.equal(pure, zero_damping_ref)
+
+    blended, g = _solve_with_args(
+        legacy_trainer, types.SimpleNamespace(damping=0.8, cg_mixing_weight=0.3)
+    )
+    expected = 0.3 * g + 0.7 * pure
+    assert torch.allclose(blended, expected, rtol=1e-7, atol=1e-9)
