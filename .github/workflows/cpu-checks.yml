@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - chore/maintenance-round1
+      - fix/cg-fletcher-reeves-beta
   workflow_dispatch:
 
 permissions:
@@ -48,7 +49,7 @@ jobs:
       - name: Install standalone test dependencies
         run: pip install -r requirements/cpu-test.txt
       - name: Run CPU tests
-        # Expected: all tests pass except 2 strict xfails that document known
-        # legacy defects (still present). An XPASS means a defect was fixed
-        # and the test should be un-xfailed.
+        # Expected: all tests pass. Strict xfail documents known legacy
+        # defects; an XPASS means a defect was fixed and the test should be
+        # un-xfailed.
         run: python -m pytest tests/cpu -q -ra --strict-markers
