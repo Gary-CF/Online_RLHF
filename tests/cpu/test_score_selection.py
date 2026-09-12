@@ -4,10 +4,10 @@ The module is loaded fresh per test (conftest fixture), so its module-level
 ``_global_V`` accumulator used by ``uncertainty_score`` cannot leak between
 tests.
 
-Naming note (pinned as observed behavior): ``get_score_fn``'s docstring
-lists "apo" as an option, but the actual dispatcher key is
-"uncertainty_score"; asking for "apo" raises ValueError. Recorded in
-docs/maintenance/review.md.
+Naming notes (fixed on branch ``fix/cg-fletcher-reeves-beta``): "apo" is now
+an accepted alias of "uncertainty_score" (the docstring already advertised
+it), and ``one_step_fisher_score`` is a deprecated alias of the accurately
+named ``one_step_embedding_l2_score``. See docs/maintenance/review.md.
 """
 
 import pytest
@@ -101,18 +101,29 @@ def test_uncertainty_score_uses_accumulated_v_matrix(legacy_rm_score_selection):
 
 def test_get_score_fn_dispatches_known_types(legacy_rm_score_selection):
     mod = legacy_rm_score_selection
-    assert mod.get_score_fn("fisher") is mod.one_step_fisher_score
+    assert mod.get_score_fn("fisher") is mod.one_step_embedding_l2_score
     assert mod.get_score_fn("reward_diff") is mod.reward_diff_score
     assert mod.get_score_fn("margin") is mod.margin_based_score
     assert mod.get_score_fn("random") is mod.random_score
     assert mod.get_score_fn("uncertainty_score") is mod.uncertainty_score
 
 
+def test_get_score_fn_accepts_apo_alias(legacy_rm_score_selection):
+    mod = legacy_rm_score_selection
+    # "apo" is documented in the docstring and now aliases uncertainty_score.
+    assert mod.get_score_fn("apo") is mod.uncertainty_score
+
+
+def test_fisher_alias_is_deprecated_but_equivalent(legacy_rm_score_selection):
+    mod = legacy_rm_score_selection
+    assert mod.one_step_fisher_score is mod.one_step_embedding_l2_score
+    _, _, chosen_emb, rejected_emb = _batch()
+    old_name = mod.one_step_fisher_score(None, None, chosen_emb, rejected_emb)
+    new_name = mod.one_step_embedding_l2_score(None, None, chosen_emb, rejected_emb)
+    assert torch.equal(old_name, new_name)
+
+
 def test_get_score_fn_rejects_unknown_types(legacy_rm_score_selection):
     mod = legacy_rm_score_selection
     with pytest.raises(ValueError, match="Unknown score type"):
         mod.get_score_fn("not_a_score")
-    # Docstring lists "apo" but the dispatcher key is "uncertainty_score":
-    # the alias is NOT accepted.
-    with pytest.raises(ValueError, match="Unknown score type"):
-        mod.get_score_fn("apo")
