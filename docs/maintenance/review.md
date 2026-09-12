@@ -15,8 +15,11 @@ as recorded by the git remotes.
 ## Scope delivered this round
 
 - README corrections (usage instructions only).
-- CPU test suite for the legacy reward-model head-HVP code:
+- CPU test suite for the legacy reward-model HVP code:
   HVP, conjugate gradient, damping schedule, pair-selection helpers.
+- Round 2 additions: full-model HVP trainer coverage (`rm_trainer_hvp`),
+  conversion-pipeline and score-selection tests, isolation-adapter and
+  RNG-guard regression tests, and the damping-wiring audit below.
 - Minimal CI (lint of new code + CPU pytest) and maintenance docs.
 - No production code under `openrlhf/`, `pipeline/`, `merge_peft.py`, or the
   root `requirements.txt` was modified (verified via `git diff <baseline>`).
@@ -81,12 +84,70 @@ as recorded by the git remotes.
   `args.damping` is set to 0.0 to exclude the mixing; this is NOT the default
   CLI training configuration.
 
+## Round 2: damping-wiring audit (read-only, with file:line evidence)
+
+- The HVP regularization term is ALWAYS the constructor-time constant
+  `cg_damping` (`rm_trainer_head_hvp.py:154`, `rm_active_trainer_head_hvp.py:128`,
+  `rm_trainer_hvp.py:116`). `get_current_damping()`'s scheduled value never
+  enters the HVP/CG mathematics in any trainer.
+- Head trainers: the schedule gates the update path only —
+  `if self.args.use_hvp and current_damping < 1.0`
+  (`rm_trainer_head_hvp.py:300`, `rm_active_trainer_head_hvp.py:345`). Once the
+  schedule reaches 1.0, training falls back to the raw gradient for the rest
+  of the run.
+- Full-model trainer: `current_damping` is computed at `rm_trainer_hvp.py:256`
+  but used ONLY for printing/logging (`:273`, `:313`) — the schedule has no
+  control-flow effect there (behavioral drift vs. the head trainers).
+- `--damping` has double duty in the CLI (`train_rm_head_hvp.py:289`,
+  `train_rm_hvp.py`): it is both (a) the schedule base value / HVP
+  regularization `cg_damping`, and (b) the mixing weight that blends the CG
+  output with the raw gradient. With the CLI default `0.8`, every multi-step
+  CG update direction is 80% raw gradient by construction.
+- CLI defaults (`train_rm_head_hvp.py:287-294`): `--use_hvp` False,
+  `--damping` 0.8, `--damping_strategy` linear, `--damping_growth_rate` 100,
+  `--num_cg_steps` 3.
+- Only the full-model trainer's HVP actually calls
+  `deepspeed.zero.GatheredParameters` (`rm_trainer_hvp.py:101`); in the head
+  trainers that call is commented out. The CPU tests pass this gate via a
+  scoped no-op context manager that mocks NO numerics (see
+  `tests/support/legacy_imports.py`).
+
+## Round 2: additional observations (pinned, not classified as defects)
+
+- `rm_trainer_head.py`, `rm_active_trainer_head.py` and
+  `rm_trainer_head_NewtonStep.py` do not implement hessian_vector_product /
+  conjugate_gradient_solver / get_current_damping at all; no symbol drift
+  exists among the three HVP trainers (HVP implementations differ only by the
+  deepspeed gate).
+- `get_score_fn` docstring lists "apo" as an option but the dispatcher key is
+  "uncertainty_score" (`rm_score_selection.py:149` vs `:159`); requesting
+  "apo" raises ValueError. Also, `one_step_fisher_score` is named "Fisher" but
+  computes the squared L2 distance of chosen/rejected embeddings.
+- `convert_to_preference_dataset` iterates a `set` intersection, so output row
+  order is non-deterministic; tests assert sets/counts only.
+
+## Pending author decisions (no production change made)
+
+- D-1 (CG-1): fix `beta` to the standard new/old squared-residual ratio, or
+  document the current recurrence as intended.
+- D-2 (CG-2): keep squared-residual semantics and rename/document, or compare
+  `sqrt(r_norm_sq)` against `residual_tol`.
+- D-3 (damping wiring): three independent sub-questions — (a) should the
+  full-model trainer honor the schedule gate like the head trainers;
+  (b) should `--damping` be split into two flags (regularization vs. mixing);
+  (c) should the scheduled value feed the HVP instead of the constant.
+- D-4 (selection semantics): `best_quartile` fixed 4th-best vs. a true
+  quartile; `get_random_indices` uses the global `random` module.
+- D-5 (naming): "apo" alias / `one_step_fisher_score` naming in
+  `rm_score_selection.py`.
+
 ## User review checklist
 
 1. README diff — wording-only fixes to existing instructions.
 2. Tests really call the production implementations (file-path loading from
-   this checkout; see `tests/support/legacy_imports.py`) and the 2 known
-   failures are transparent strict xfails.
+   this checkout; see `tests/support/legacy_imports.py`) and the 3 known
+   failures (one CG-1 test on each of the three HVP trainers) are transparent
+   strict xfails.
 3. Production files are untouched: `git diff a5a8131 -- openrlhf pipeline
    merge_peft.py requirements.txt` is empty and no new untracked files were
    added under those paths.

@@ -33,27 +33,27 @@ sentinel guarantees no test can silently route around the missing stack.
 
 ## Commands and results (local run)
 
-Final full verification (round-1 precision fixes applied; raw log with the
-real pytest exit code is archived alongside this review, not transcribed
-here):
+Final full verification (round 2: full-model trainer coverage, conversion
+pipeline, score selection, pre-commit config; raw log with the real pytest
+exit code captured via `tee`):
 
 ```bash
 python -m pip check          # No broken requirements found.
 python -m pytest tests/cpu -q -ra --strict-markers
-# 48 passed, 2 xfailed in 1.99s (pytest); process real 2.822s — well under the 60s budget
+# 76 passed, 3 xfailed in 0.27s (pytest); process real 1.366s — well under the 60s budget
 ruff check tests/            # All checks passed!
+pre-commit run --all-files   # ruff + ruff-format on tests/: Passed (offline local hooks)
 ```
 
-Raw log of the final run (verbatim stdout + real pytest exit code 0,
-captured with `tee`): `/home/gary/pytest-round1b-final-20260911-154750.log`.
+Raw log of the final run (verbatim stdout + real pytest exit code 0):
+`/home/gary/pytest-round2-final-20260912-124030.log`.
 
-Historical note: the "~1.5s / 40 passed, 2 xfailed" figures in earlier
-reports were from an earlier, smaller suite (before the round-1b precision
-fixes added the isolation-adapter and RNG-guard regression tests). They are
-kept here only as history; the current suite is the one above.
+Historical note: "48 passed, 2 xfailed" was the round-1b suite; "~1.5s /
+40 passed, 2 xfailed" was the original round-1 suite. Both are kept here
+only as history; the current suite is the one above.
 
-The 2 xfails are strict and both document the same confirmed legacy defect
-(CG-1 in `review.md`), one instance per head trainer; they must fail for the
+The 3 xfails are strict and all document the same confirmed legacy defect
+(CG-1 in `review.md`), one instance per HVP trainer; they must fail for the
 expected reason. An XPASS means the defect was fixed and the test should be
 updated.
 
