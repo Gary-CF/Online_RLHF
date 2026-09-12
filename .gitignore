@@ -157,3 +157,8 @@ pipeline/TODOs
 # Local task instructions / audit docs (not for commit)
 Kimi-Code-Online-RLHF-round1.md
 Kimi-Code-Online-RLHF-round1.md:Zone.Identifier
+# Round-3 task instructions (not for
+   commit)
+Kimi-Code-Online-RLHF-round3-*.md
+Kimi-Code-Online-RLHF-ro
+   und3-*.md:Zone.Identifier
