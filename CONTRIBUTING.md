@@ -24,10 +24,21 @@ python3.12 -m venv /path/to/lint-venv
 /path/to/lint-venv/bin/ruff check tests/
 ```
 
-Expected result: all tests pass, plus 2 strict xfails documenting the same
-known legacy defect (CG-1) on both head trainers (see
-`docs/maintenance/review.md`). An XPASS means the defect was fixed — remove
-the xfail instead of weakening the test.
+Optional git hooks (offline local hooks, same pinned ruff, `tests/` only;
+installing writes `.git/hooks`, so it stays a user-run step):
+
+```bash
+/path/to/lint-venv/bin/pip install pre-commit
+/path/to/lint-venv/bin/pre-commit install
+/path/to/lint-venv/bin/pre-commit run --all-files
+```
+
+Expected result on `fix/cg-fletcher-reeves-beta`: all tests pass with **0
+xfail** (90 passed as of round 3). The pre-fix CG-1 behavior is documented in
+`docs/maintenance/review.md` and guarded by
+`test_cg_converges_on_conjugate_direction_system`; if that test ever fails,
+the beta fix was silently reverted — restore it instead of weakening the
+test.
 
 ## Preparing small changes
 
