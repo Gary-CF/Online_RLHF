@@ -58,8 +58,7 @@ def _relative_residual(operator, x, rhs):
 
 
 def test_cg_output_contract_at_dimension_budget(legacy_trainer):
-    """Shape/dtype/device/finiteness for the same max_iter=4 budget the strict
-    xfail uses, so the xfail only ever carries numerical-solver precision."""
+    """Shape/dtype/device/finiteness at the regression fixture's 4-step budget."""
     x, flat_grad, *_ = _solve(legacy_trainer, max_iter=4)
     assert x.shape == flat_grad.shape
     assert x.dtype == torch.float64
@@ -69,7 +68,7 @@ def test_cg_output_contract_at_dimension_budget(legacy_trainer):
 
 # CG-1 regression guard: the audit fixture's SPD system must be solved to
 # rel. residual <= 1e-5 within dim=4 steps now that the Fletcher-Reeves beta
-# uses the old/new squared-residual ratio. (Before the fix this needed an
+# uses the new/old squared-residual ratio. (Before the fix this needed an
 # xfail: 4-step rel. residual was 0.231158.)
 def test_cg_solves_spd_system_within_dimension_steps(legacy_trainer):
     """Standard linear CG on this SPD system reaches rel. residual <= 1e-5
@@ -203,14 +202,19 @@ def _solve_with_args(legacy_trainer, args_namespace, max_iter=3):
 
 
 def test_cg_mixing_weight_defaults_to_damping_bitwise(legacy_trainer):
-    """Task B regression: when args has no cg_mixing_weight attribute (every
-    pre-existing caller), the fallback must reproduce the old self.args.damping
-    mixing EXACTLY — and an explicit value equal to damping must agree bitwise."""
+    """Compare missing, None and explicit damping on the SAME current solver.
+
+    Equality does not compare against the pre-beta-fix numerical output.
+    """
     fallback, _ = _solve_with_args(legacy_trainer, types.SimpleNamespace(damping=0.8))
     explicit, _ = _solve_with_args(
         legacy_trainer, types.SimpleNamespace(damping=0.8, cg_mixing_weight=0.8)
     )
+    explicit_none, _ = _solve_with_args(
+        legacy_trainer, types.SimpleNamespace(damping=0.8, cg_mixing_weight=None)
+    )
     assert torch.equal(fallback, explicit)
+    assert torch.equal(fallback, explicit_none)
 
 
 def test_cg_mixing_weight_overrides_damping(legacy_trainer):
@@ -220,7 +224,9 @@ def test_cg_mixing_weight_overrides_damping(legacy_trainer):
     pure, g = _solve_with_args(
         legacy_trainer, types.SimpleNamespace(damping=0.8, cg_mixing_weight=0.0)
     )
-    zero_damping_ref, _ = _solve_with_args(legacy_trainer, types.SimpleNamespace(damping=0.0))
+    zero_damping_ref, _ = _solve_with_args(
+        legacy_trainer, types.SimpleNamespace(damping=0.0)
+    )
     assert torch.equal(pure, zero_damping_ref)
 
     blended, g = _solve_with_args(
@@ -228,3 +234,19 @@ def test_cg_mixing_weight_overrides_damping(legacy_trainer):
     )
     expected = 0.3 * g + 0.7 * pure
     assert torch.allclose(blended, expected, rtol=1e-7, atol=1e-9)
+
+
+def test_cg_single_iteration_does_not_mix(legacy_trainer):
+    pure, _ = _solve_with_args(
+        legacy_trainer,
+        types.SimpleNamespace(damping=0.8, cg_mixing_weight=0.0),
+        max_iter=1,
+    )
+    full_weight, grad = _solve_with_args(
+        legacy_trainer,
+        types.SimpleNamespace(damping=0.8, cg_mixing_weight=1.0),
+        max_iter=1,
+    )
+    assert torch.equal(pure, full_weight)
+    # Discriminates against accidentally returning the gradient for w=1.
+    assert not torch.allclose(pure, grad)

@@ -184,7 +184,7 @@ Note: the training commands above additionally rely on components such as DeepSp
 
 ## 🧪 CPU Tests
 
-A small set of CPU tests characterizes the numerical behavior of the legacy reward-model code (HVP, conjugate gradient, damping schedule, and pair selection helpers). They do not require GPU or the full training stack. See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/maintenance/environment.md](docs/maintenance/environment.md) for how to run them.
+CPU tests characterize the legacy reward-model numerics (HVP, conjugate gradient, damping schedules and selection helpers) and separately test the real argparse blocks of five HVP CLI entries. They do not start full CLI modules or verify training integration. See [CONTRIBUTING.md](CONTRIBUTING.md) for checks, [environment.md](docs/maintenance/environment.md) for local and historical CI evidence, and [review.md](docs/maintenance/review.md) for scope and pending algorithm decisions. Direct HVP CLIs accept `--cg_mixing_weight`; pipeline wrappers do not forward it. A zero weight controls solver mixing but does not bypass the head trainer's schedule gate.
 
 ## 🎛 Configuration Options
 

@@ -1,43 +1,67 @@
 # AGENTS.md — collaboration boundaries
 
-## Write scope (this maintenance round)
+## Long-term contribution guidance
 
-- Allowed: `README.md` (wording fixes), `tests/cpu/`, `tests/support/`,
-  `pytest.ini`, `requirements/cpu-test.txt`, `requirements/lint.txt`,
-  `ruff.toml`, `.pre-commit-config.yaml`,
-  `.github/workflows/cpu-checks.yml`, `CONTRIBUTING.md`,
-  `docs/maintenance/`, `.gitignore`, this file.
-- Read-only: `openrlhf/**`, `pipeline/**`, `merge_peft.py`, root
-  `requirements.txt` (including `transformers==4.46.3`).
-- If a CPU test cannot run without touching production code, use the
-  test-side isolation adapter (`tests/support/legacy_imports.py`) instead.
+These are local fork maintenance practices, not policies accepted by the paper
+authors or upstream. Keep changes small, preserve existing user work, and discuss
+algorithm/interface decisions before expanding scope. CPU tests must use real
+production numerics through file-path isolation, controlled package shells and
+the DeepSpeed fail-fast sentinel. Only the full-model GatheredParameters gate
+gets a scoped empty context. Never mock gradients, HVP or CG outputs.
+
+## Temporary authorization: round 4
+
+This round starts from `14bbff0de58b765a7e4303a85af0fd1fc032b89d` on
+`fix/cg-fletcher-reeves-beta`. The user's explicit round-4 authorization
+supersedes older read-only restrictions only for the following scope:
+
+- Tests under `tests/cpu/`, `tests/support/`, `pytest.ini`; maintenance CI,
+  hooks and Ruff configuration; `docs/maintenance/`, CONTRIBUTING and this file.
+- README maintenance entry/scope only; .gitignore only narrow personal-task
+  filename fixes, without deleting or renaming files.
+- The five HVP CLIs: only cg_mixing_weight argument definition/help and explicit
+  None fallback after parsing. No parser refactor or new validation/warnings.
+- Three HVP trainers: docstrings/comments only; executable AST must be unchanged.
+
+Do not change dependencies, pipeline/**, merge_peft.py, root requirements.txt,
+LICENSE, score/selection code or any other production behavior. In particular,
+beta, alpha's fixed epsilon, stopping, schedules/normalization/HVP wiring/gates,
+mixing rules, autograd, optimizer and distributed behavior stay unchanged.
+This temporary permission is not standing authorization for future rounds.
 
 ## Git division of labor
 
-- The user creates branches/worktrees, stages, commits, merges, pushes and
-  opens PRs. Agent work stays uncommitted unless the user asks otherwise.
-- Read-only git inspection is fine; never stash/reset/rebase/amend/force-push
-  or change remotes/global config.
+The user alone performs ALL Git writes: staging, commits, pushes, branch/worktree
+creation or switching, reset, merge, cherry-pick, rebase, stash, clean, remotes
+and config changes, hooks installation and PR creation. Agents may inspect Git
+read-only and use git archive for snapshots outside the repository.
+This round leaves changes uncommitted and never switches a dirty worktree.
 
 ## Check commands
 
+Run from the repository in dedicated environments; never conda base:
+
 ```bash
-python -m pytest tests/cpu -q -ra --strict-markers   # expect 90 passed, 0 xfailed (on fix/cg-fletcher-reeves-beta)
-ruff check tests/                                     # pinned via requirements/lint.txt
-pre-commit run --all-files                            # optional; same ruff, tests/ only
-git diff chore/maintenance-round1 -- openrlhf/        # on the fix branch: ONLY the round-3 authorized changes
-git diff a5a813106fb6501d32a7d7c9ed2752e36901673e -- pipeline merge_peft.py requirements.txt  # must be empty
+/home/gary/venvs/online_rlhf_cpu/bin/python -m pytest tests/cpu -q -ra --strict-markers
+/home/gary/venvs/online_rlhf_lint/bin/ruff check tests/
+/home/gary/venvs/online_rlhf_lint/bin/ruff format --check tests/
+/home/gary/venvs/online_rlhf_cpu/bin/python -m pip check
+git diff --check
 ```
+
+Expect no failed tests, unexpected skips or xfails on the fix branch. Actual
+counts and versions belong in docs/maintenance/environment.md, not a fixed
+acceptance count here. Optional hooks require the lint venv bin on PATH;
+agents must not install them.
 
 ## Known-failure policy
 
-- CG-1 is FIXED on `fix/cg-fletcher-reeves-beta`: the suite is fully green
-  (0 xfail). `test_cg_solves_spd_system_within_dimension_steps` and
-  `test_cg_converges_on_conjugate_direction_system` pin the corrected
-  Fletcher-Reeves beta; if they fail, the fix was reverted — restore it,
-  never loosen tolerances.
-- CG-2 (squared-residual `residual_tol` semantics) is pinned by a normally
-  PASSING test and documented in the solver docstrings; changing the
-  semantics is an author decision (D-2), not a maintenance action.
-- Do not mock gradients, HVP or CG outputs in these tests; the real
-  implementations are the objects under test.
+- CG-1 is fixed on this branch. A regression requires diagnosis of environment,
+  import/numerical paths and source changes; failure alone does not prove beta
+  was reverted. Never relax tolerances without evidence or hide it with xfail.
+- CG-2's squared-residual semantics are characterized by a passing test.
+- CG-3 is an observed pre-existing scale sensitivity, not a newly agreed accuracy
+  contract or failing CI test. Author decisions are recorded in review.md.
+- A strict xfail is appropriate only for an agreed, reproducible known defect,
+  with a specific reason and narrow numerical assertion. Unexpected passes must
+  trigger review/removal of the marker, not be silently accepted.

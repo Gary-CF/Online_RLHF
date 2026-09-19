@@ -2,58 +2,86 @@
 
 ## Running the CPU checks
 
-The CPU tests in `tests/cpu/` characterize the numerical behavior of the
-legacy reward-model code and are isolated from the training stack (no
-transformers/DeepSpeed/GPU needed). Use a dedicated virtualenv, e.g.:
+The CPU suite tests real legacy reward-model numerics through isolated file-path
+imports and separately executes the five real CLI argparse blocks. Parameter-block
+tests do not start complete CLI modules, load models or integrate training.
+See [environment.md](docs/maintenance/environment.md) for actual versions/results
+and [review.md](docs/maintenance/review.md) for findings and unresolved decisions.
+
+Use a dedicated CPU virtualenv; never conda base or the full training requirements:
 
 ```bash
-python3.12 -m venv /path/to/venv
-/path/to/venv/bin/pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
-/path/to/venv/bin/pip install -r requirements/cpu-test.txt
-/path/to/venv/bin/python -m pytest tests/cpu -q -ra --strict-markers
+python3.12 -m venv /path/to/cpu-venv
+/path/to/cpu-venv/bin/pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+/path/to/cpu-venv/bin/pip install -r requirements/cpu-test.txt
+/path/to/cpu-venv/bin/python -m pip check
+/path/to/cpu-venv/bin/python -m pytest tests/cpu -q -ra --strict-markers
 ```
 
-Lint (new maintenance code under `tests/` only, pinned version). Use the
-same dedicated venv as above, or a separate lint venv — always call the
-interpreter by path (never a bare `pip`/`ruff`, which could install into or
-run from your base environment):
+Use a separate lint virtualenv with the pinned Ruff version:
 
 ```bash
 python3.12 -m venv /path/to/lint-venv
 /path/to/lint-venv/bin/pip install -r requirements/lint.txt
+/path/to/lint-venv/bin/python -m pip check
 /path/to/lint-venv/bin/ruff check tests/
+/path/to/lint-venv/bin/ruff format --check tests/
 ```
 
-Optional git hooks (offline local hooks, same pinned ruff, `tests/` only;
-installing writes `.git/hooks`, so it stays a user-run step):
+The pins cover maintenance tools and direct CPU test dependencies. They do not
+lock the full training stack or all transitive dependencies, and do not establish
+complete training reproducibility. Formatting is limited to tests/.
+
+## Optional local hooks
+
+Hooks are optional system hooks, use the same pinned Ruff and select only Python
+files under tests/. Install them only if the user chooses to write .git/hooks.
+Activate the lint venv (or put its bin directory first on PATH): invoking
+pre-commit by absolute path alone does NOT ensure its system hooks find that Ruff.
 
 ```bash
-/path/to/lint-venv/bin/pip install pre-commit
-/path/to/lint-venv/bin/pre-commit install
-/path/to/lint-venv/bin/pre-commit run --all-files
+source /path/to/lint-venv/bin/activate
+python -m pip install pre-commit
+ruff --version
+pre-commit install
+pre-commit run --all-files
 ```
 
-Expected result on `fix/cg-fletcher-reeves-beta`: all tests pass with **0
-xfail** (90 passed as of round 3). The pre-fix CG-1 behavior is documented in
-`docs/maintenance/review.md` and guarded by
-`test_cg_converges_on_conjugate_direction_system`; if that test ever fails,
-the beta fix was silently reverted — restore it instead of weakening the
-test.
+Expected: Ruff matches requirements/lint.txt; hook installation succeeds; both
+Ruff checks pass. The check hook can apply lint fixes; inspect the diff afterwards.
+None of these optional installation steps was run by the agent in round 4.
+
+On the fix branch expect no failures, unexpected skips or xfails. If a CG
+regression fails, inspect the environment, actual loaded implementation, numerical
+path and source changes before attributing it to a beta revert. Do not relax
+tolerances without evidence or mark unexpected failures xfail to obtain green CI.
+Strict xfails remain reserved for agreed, reproducible defects; an XPASS requires
+review. CG-3 is a discussion item, not an agreed accuracy contract.
 
 ## Preparing small changes
 
-- Keep production code under `openrlhf/`, `pipeline/` and `merge_peft.py`
-  read-only unless the change has been discussed; the CPU tests must keep
-  passing without installing the training stack.
-- Do not run repo-wide formatters or bulk import cleanups.
-- See `docs/maintenance/environment.md` for the verified environment and
-  `docs/maintenance/review.md` for the review baseline and known defects.
+These are local fork practices, not upstream-approved policy. Keep algorithm
+changes, maintenance infrastructure and optional interfaces logically separate.
+The current round's narrow authorization is in AGENTS.md; it is not a standing
+permission to change production behavior.
+
+- Preserve user changes; do not run repository-wide formatters or import cleanups.
+- The user performs all Git writes, branch/worktree operations, hooks installation
+  and PR actions. Agents leave their work uncommitted.
+- README PyTorch/Citation/line-break/stop_t corrections are already complete.
+- Local tests do not prove that the revised GitHub Actions workflow has run.
+  Remote validation follows a user-controlled commit/push.
 
 ## What needs discussion before changing
 
-- Anything that alters algorithm behavior: the conjugate-gradient `beta`
-  computation, `residual_tol` semantics, the damping schedules and their
-  wiring into the HVP, and the pair-selection rules in
-  `openrlhf/utils/convert_to_dataset.py`.
-- Training defaults (learning rates, batch sizes, sampling budgets, output
-  paths) and the pinned `transformers==4.46.3` in the root requirements.
+CG beta, alpha epsilon, residual tolerance semantics, damping formulas/time
+normalization/HVP wiring and head/full gates, mixing rules, selection/randomness,
+training defaults and dependency changes require discussion. D-2, D-3a, the three
+parts of D-3c and D-4 remain open in review.md.
+
+All five direct HVP CLIs accept --cg_mixing_weight. Its None fallback preserves
+the damping-based mixing rule; the earlier beta fix still changes multi-step CG
+outputs. A weight of zero controls mixing only when the solver is called; the
+head schedule gate can bypass it. Pipeline wrappers do not forward this new flag.
+The earlier apo alias adds an accepted API value; pipeline choices still reject
+apo and compatibility score aliases have no runtime deprecation warning.

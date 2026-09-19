@@ -3,11 +3,11 @@ name: cpu-checks
 on:
   pull_request:
   push:
-    branches:
-      - main
-      - chore/maintenance-round1
-      - fix/cg-fletcher-reeves-beta
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -32,8 +32,15 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - name: Install lint tools
         run: pip install -r requirements/lint.txt
+      - name: Check lint dependencies and versions
+        run: |
+          python -m pip check
+          python --version
+          ruff --version
       - name: Ruff check (tests only)
         run: ruff check tests/
+      - name: Ruff format check (tests only)
+        run: ruff format --check tests/
 
   cpu-tests:
     name: CPU pytest (isolated from training stack)
@@ -48,8 +55,10 @@ jobs:
         run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
       - name: Install standalone test dependencies
         run: pip install -r requirements/cpu-test.txt
+      - name: Check CPU dependencies and versions
+        run: |
+          python -m pip check
+          python -c "import sys, torch, numpy, pytest, tqdm; print(sys.version); print({m.__name__: m.__version__ for m in (torch, numpy, pytest, tqdm)})"
       - name: Run CPU tests
-        # Expected: all tests pass. Strict xfail documents known legacy
-        # defects; an XPASS means a defect was fixed and the test should be
-        # un-xfailed.
+        # Current fix branch: no failures, unexpected skips or xfails.
         run: python -m pytest tests/cpu -q -ra --strict-markers

@@ -131,10 +131,15 @@ class RewardModelTrainer(ABC):
     
     def conjugate_gradient_solver(self, params: List[nn.Parameter], loss: torch.Tensor,
                                   flat_grad: torch.Tensor, max_iter=10, residual_tol=1e-10):
-        """Solve (H + cg_damping * I) x = flat_grad via conjugate gradient.
+        """Approximate (H + cg_damping * I) x = flat_grad with CG.
 
-        residual_tol is compared against the SQUARED residual norm
+        Standard CG convergence assumes a symmetric positive-definite
+        operator; an arbitrary training Hessian need not satisfy this.
+        residual_tol compares the SQUARED residual norm
         (r_norm_sq < residual_tol), not the residual norm.
+        For max_iter > 1, return w * flat_grad + (1 - w) * x_cg,
+        where w is cg_mixing_weight or damping when absent/None.
+        Thus the returned direction may not be the pure CG solution.
         """
         # flat_grad = grad.view(-1)
         x = torch.zeros_like(flat_grad)  # initial guess
@@ -169,8 +174,8 @@ class RewardModelTrainer(ABC):
                 torch.cuda.empty_cache()
         
         if max_iter > 1:
-            # Fallback keeps pre-flag behavior bit-identical when the CLI did
-            # not set args.cg_mixing_weight (0.0 is a legal explicit value).
+            # Missing/None retains the damping-based mixing rule; this does
+            # not undo the beta fix. An explicit 0.0 remains valid.
             cg_mixing_weight = getattr(self.args, "cg_mixing_weight", None)
             if cg_mixing_weight is None:
                 cg_mixing_weight = self.args.damping
